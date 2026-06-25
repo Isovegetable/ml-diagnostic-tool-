@@ -21,10 +21,12 @@ _CJK_FONT_PATHS = [
     # macOS
     "/System/Library/Fonts/PingFang.ttc",
     "/System/Library/Fonts/STHeiti Light.ttc",
-    # Linux
-    "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
-    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    # Linux (apt install fonts-noto-cjk)
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    # Linux (apt install fonts-wqy-microhei)
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
 ]
 _CJK_FONT = None
 for _p in _CJK_FONT_PATHS:
@@ -57,11 +59,10 @@ class _ReportPDF(FPDF):
 
     def header(self):
         if self.page_no() > 1:
-            f = self._font("I", 8)
-            self.set_font(*f)
+            f = self._font("I", 8); self.set_font(*f)
             self.set_text_color(150, 150, 150)
-            self.cell(0, 6, "材料机器学习诊断报告", align="L")
-            self.cell(0, 6, f"第 {self.page_no()} 页", align="R", new_x="LMARGIN", new_y="NEXT")
+            self.cell(0, 6, "Materials ML Diagnostic Report" if not self._use_cjk else "材料机器学习诊断报告", align="L")
+            self.cell(0, 6, f"Page {self.page_no()}", align="R", new_x="LMARGIN", new_y="NEXT")
             self.line(10, 14, 200, 14)
             self.ln(4)
 
@@ -69,9 +70,13 @@ class _ReportPDF(FPDF):
         self.set_y(-15)
         f = self._font("", 7); self.set_font(*f)
         self.set_text_color(180, 180, 180)
-        self.cell(0, 10, "本报告由材料机器学习自动诊断工具生成，仅供参考", align="C")
+        self.cell(0, 10,
+            "Disclaimer: For research reference only" if not self._use_cjk
+            else "本报告由材料机器学习自动诊断工具生成，仅供参考",
+            align="C")
 
-    def section_title(self, title: str):
+    def section_title(self, title_cn: str, title_en: str = ""):
+        title = title_en if not self._use_cjk else title_cn
         f = self._font("B", 13); self.set_font(*f)
         self.set_text_color(31, 119, 180)
         self.cell(0, 10, title, new_x="LMARGIN", new_y="NEXT")
@@ -85,7 +90,8 @@ class _ReportPDF(FPDF):
         self.multi_cell(0, 6, text)
         self.ln(2)
 
-    def key_value(self, key: str, value: str):
+    def key_value(self, key_cn: str, value: str, key_en: str = ""):
+        key = key_en if not self._use_cjk else key_cn
         f = self._font("", 10); self.set_font(*f)
         self.set_text_color(50, 50, 50)
         self.cell(60, 7, key, align="R")
@@ -173,7 +179,6 @@ def generate_pdf_report(
         color = colors.get(level, (100, 100, 100))
         score = diagnosis["score"]
 
-        # 等级色块
         pdf.set_fill_color(*color)
         pdf.set_text_color(255, 255, 255)
         f = pdf._font("B", 28); pdf.set_font(*f)
@@ -231,7 +236,7 @@ def generate_pdf_report(
         f = pdf._font("", 10); pdf.set_font(*f)
         pdf.set_text_color(50, 50, 50)
         for s in suggestions:
-            pdf.cell(5, 6, "•")
+            pdf.cell(5, 6, "-")
             pdf.multi_cell(0, 6, s)
             pdf.ln(1)
         pdf.ln(2)
@@ -246,8 +251,7 @@ def generate_pdf_report(
     pdf.multi_cell(0, 4.5,
         "免责声明：本工具仅用于科研数据初步分析，"
         "不代表因果结论，不保证论文发表。"
-        "所有结果均基于自动化模型流程生成，"
-        "仅供参考。"
+        "所有结果均基于自动化模型流程生成，仅供参考。"
     )
 
     return bytes(pdf.output())
