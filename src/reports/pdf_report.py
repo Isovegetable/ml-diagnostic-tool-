@@ -254,10 +254,13 @@ def generate_pdf_report(
         pdf.section_title(_tr("诊断建议", "Recommendations"), _tr("诊断建议", "Recommendations"))
         f = pdf._font("", 10); pdf.set_font(*f)
         pdf.set_text_color(50, 50, 50)
-        for s in suggestions:
-            pdf.cell(5, 6, "-")
-            pdf.multi_cell(0, 6, s)
-            pdf.ln(1)
+        if not use_cjk:
+            pdf.multi_cell(0, 6, "See the full report for detailed recommendations.")
+        else:
+            for s in suggestions:
+                pdf.cell(5, 6, "-")
+                pdf.multi_cell(0, 6, s)
+                pdf.ln(1)
         pdf.ln(2)
 
     # ========== 免责声明 ==========
