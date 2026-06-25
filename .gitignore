@@ -7,3 +7,4 @@ test_output.pdf
 catboost_info/
 .claude/
 .fonts/
+test_pdf.pdf
