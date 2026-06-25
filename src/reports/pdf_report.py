@@ -13,11 +13,13 @@ from pathlib import Path
 from fpdf import FPDF
 
 # 自动探测系统可用的中文字体
+# 优先 TTF 格式（兼容性更好），其次 TTC
 _CJK_FONT_PATHS = [
-    # Windows
-    "C:/Windows/Fonts/msyh.ttc",
+    # Windows TTF
     "C:/Windows/Fonts/simhei.ttf",
     "C:/Windows/Fonts/deng.ttf",
+    # Windows TTC
+    "C:/Windows/Fonts/msyh.ttc",
     # macOS
     "/System/Library/Fonts/PingFang.ttc",
     "/System/Library/Fonts/STHeiti Light.ttc",
@@ -35,20 +37,29 @@ for _p in _CJK_FONT_PATHS:
         break
 
 
+def _add_cjk_font(pdf: FPDF, font_path: str) -> bool:
+    """注册中文字体到 PDF，自动判断 TTC/TTF。"""
+    try:
+        is_ttc = font_path.lower().endswith(".ttc")
+        # fpdf2 指定 ttc_index=0 以保证 TTC 使用第一个字体
+        pdf.add_font("CJK", "", font_path, ttc_index=0) if is_ttc else pdf.add_font("CJK", "", font_path)
+        # 加粗版本
+        bold_path = font_path.replace(".ttc", "bd.ttc").replace(".ttf", "bd.ttf")
+        if os.path.exists(bold_path):
+            pdf.add_font("CJK", "B", bold_path, ttc_index=0) if is_ttc else pdf.add_font("CJK", "B", bold_path)
+        else:
+            pdf.add_font("CJK", "B", font_path, ttc_index=0) if is_ttc else pdf.add_font("CJK", "B", font_path)
+        return True
+    except Exception:
+        return False
+
+
 class _ReportPDF(FPDF):
     """自定义 PDF 样式（支持中文）。"""
 
     def __init__(self):
         super().__init__()
-        if _CJK_FONT:
-            self.add_font("CJK", "", _CJK_FONT, uni=True)
-            # 尝试加粗版本
-            bold_path = _CJK_FONT.replace(".ttc", "bd.ttc").replace(".ttf", "bd.ttf")
-            if os.path.exists(bold_path):
-                self.add_font("CJK", "B", bold_path, uni=True)
-            else:
-                self.add_font("CJK", "B", _CJK_FONT, uni=True)
-        self._use_cjk = _CJK_FONT is not None
+        self._use_cjk = _CJK_FONT is not None and _add_cjk_font(self, _CJK_FONT)
 
     def _font(self, style="", size=10):
         """返回可用字体名（CJK 不支持 italic 时降级为常规）。"""
