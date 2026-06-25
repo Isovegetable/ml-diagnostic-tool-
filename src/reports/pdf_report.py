@@ -166,20 +166,22 @@ def generate_pdf_report(
         bytes: PDF 文件字节流
     """
     pdf = _ReportPDF()
+    use_cjk = pdf._use_cjk
+    _tr = lambda c, e: c if use_cjk else e
     pdf.add_page()
 
     # ========== 封面 ==========
     pdf.ln(20)
     f = pdf._font("B", 24); pdf.set_font(*f)
     pdf.set_text_color(31, 119, 180)
-    pdf.cell(0, 15, "材料机器学习诊断报告", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 15, _tr("材料机器学习诊断报告", "Materials ML Diagnostic Report"), align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(5)
     f = pdf._font("", 11); pdf.set_font(*f)
     pdf.set_text_color(120, 120, 120)
-    pdf.cell(0, 7, f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}", align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 7, f"目标列：{target_column}", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, _tr("生成时间：", "Generated: ") + datetime.now().strftime('%Y-%m-%d %H:%M'), align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, _tr("目标列：", "Target: ") + target_column, align="C", new_x="LMARGIN", new_y="NEXT")
     if data_quality:
-        pdf.cell(0, 7, f"数据集：{data_quality.get('dataset', target_column)}", align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 7, _tr("数据集：", "Dataset: ") + data_quality.get('dataset', target_column), align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(15)
 
     # ========== 诊断等级 ==========
@@ -195,7 +197,7 @@ def generate_pdf_report(
         f = pdf._font("B", 28); pdf.set_font(*f)
         pdf.cell(30, 30, f"  {level}  ", fill=True, align="C")
         f = pdf._font("", 12); pdf.set_font(*f)
-        pdf.cell(0, 30, f"  {label}   评分 {score}/100", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 30, _tr(f"  {label}   评分 {score}/100", f"  {label}   Score {score}/100"), new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
         f = pdf._font("I", 9); pdf.set_font(*f)
         pdf.set_text_color(80, 80, 80)
@@ -203,36 +205,37 @@ def generate_pdf_report(
         pdf.ln(8)
 
     # ========== 数据概况 ==========
-    pdf.section_title("数据概况")
-    pdf.key_value("原始样本数", str(original_shape[0]))
-    pdf.key_value("有效建模样本数", str(sample_size))
-    pdf.key_value("特征数量", str(feature_count))
-    pdf.key_value("目标列", target_column)
+    pdf.section_title("数据概况", "Data Overview")
+    pdf.key_value("原始样本数", str(original_shape[0]), "Original Rows")
+    pdf.key_value(_tr("有效建模样本数", "Valid Samples"), str(sample_size))
+    pdf.key_value(_tr("特征数量", "Features"), str(feature_count))
+    pdf.key_value(_tr("目标列", "Target"), target_column)
     if data_quality:
         dq_parts = []
         if data_quality.get("duplicate_rows", 0) > 0:
-            dq_parts.append(f"重复行：{data_quality['duplicate_rows']}")
+            dq_parts.append(f"Duplicates: {data_quality['duplicate_rows']}" if not use_cjk else f"重复行：{data_quality['duplicate_rows']}")
         if data_quality.get("outlier_rows", 0) > 0:
-            dq_parts.append(f"异常值行：{data_quality['outlier_rows']}")
+            dq_parts.append(f"Outliers: {data_quality['outlier_rows']}" if not use_cjk else f"异常值行：{data_quality['outlier_rows']}")
         if data_quality.get("near_dup_rows", 0) > 0:
-            dq_parts.append(f"近重复：{data_quality['near_dup_rows']}")
+            dq_parts.append(f"Near-dups: {data_quality['near_dup_rows']}" if not use_cjk else f"近重复：{data_quality['near_dup_rows']}")
         if dq_parts:
             f = pdf._font("", 9); pdf.set_font(*f)
             pdf.set_text_color(180, 100, 0)
-            pdf.cell(0, 7, "  数据质量提示：" + " | ".join(dq_parts), new_x="LMARGIN", new_y="NEXT")
+            prefix = "  Data Quality: " if not use_cjk else "  数据质量提示："
+            pdf.cell(0, 7, prefix + " | ".join(dq_parts), new_x="LMARGIN", new_y="NEXT")
             pdf.ln(2)
     pdf.ln(4)
 
     # ========== 最佳模型 ==========
-    pdf.section_title("最佳模型")
+    pdf.section_title(_tr("最佳模型", "Best Model"), _tr("最佳模型", "Best Model"))
     f = pdf._font("B", 14); pdf.set_font(*f)
     pdf.set_text_color(31, 119, 180)
     pdf.cell(0, 10, best_model_name, new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
     pdf.metric_grid([
-        ("交叉验证 R²", f"{cv_r2_mean:.4f}", f"±{cv_r2_std:.4f}"),
-        ("训练集 R²", f"{train_r2:.4f}", ""),
-        ("测试集 R²", f"{test_r2:.4f}", ""),
+        (_tr("交叉验证 R2", "CV R2"), f"{cv_r2_mean:.4f}", f"±{cv_r2_std:.4f}"),
+        (_tr("训练集 R2", "Train R2"), f"{train_r2:.4f}", ""),
+        (_tr("测试集 R2", "Test R2"), f"{test_r2:.4f}", ""),
     ])
     pdf.metric_grid([
         ("MAE", f"{mae:.4f}", ""),
@@ -243,7 +246,7 @@ def generate_pdf_report(
 
     # ========== 诊断建议 ==========
     if suggestions:
-        pdf.section_title("诊断建议")
+        pdf.section_title(_tr("诊断建议", "Recommendations"), _tr("诊断建议", "Recommendations"))
         f = pdf._font("", 10); pdf.set_font(*f)
         pdf.set_text_color(50, 50, 50)
         for s in suggestions:
@@ -260,9 +263,10 @@ def generate_pdf_report(
     f = pdf._font("I", 8); pdf.set_font(*f)
     pdf.set_text_color(140, 140, 140)
     pdf.multi_cell(0, 4.5,
-        "免责声明：本工具仅用于科研数据初步分析，"
-        "不代表因果结论，不保证论文发表。"
-        "所有结果均基于自动化模型流程生成，仅供参考。"
+        _tr(
+            "免责声明：本工具仅用于科研数据初步分析，不代表因果结论，不保证论文发表。所有结果均基于自动化模型流程生成，仅供参考。",
+            "Disclaimer: This tool is for preliminary data analysis only. Results are automated and do not represent causal conclusions or publication guarantees.",
+        )
     )
 
     return bytes(pdf.output())
