@@ -36,7 +36,7 @@
 
 **方式二：Git 克隆**
 ```
-git clone https://xxx/xxx.git
+git clone https://github.com/Isovegetable/ml-diagnostic-tool-.git
 ```
 
 ---

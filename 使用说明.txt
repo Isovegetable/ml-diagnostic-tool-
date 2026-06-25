@@ -44,7 +44,7 @@
 
 【方式二：用 Git 下载】
 
-git clone https://github.com/xxx/xxx.git
+git clone https://github.com/Isovegetable/ml-diagnostic-tool-.git
 
 
 三、启动工具
