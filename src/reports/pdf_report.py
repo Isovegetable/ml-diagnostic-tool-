@@ -136,9 +136,10 @@ class _ReportPDF(FPDF):
         self.set_xy(x_start, y_start + 26)
 
 
-def _level_label(level: str) -> str:
-    labels = {"A": "适合建模", "B": "可探索", "C": "高风险", "D": "不建议"}
-    return labels.get(level, "—")
+def _level_label(level: str, use_cjk: bool = True) -> str:
+    labels_cn = {"A": "适合建模", "B": "可探索", "C": "高风险", "D": "不建议"}
+    labels_en = {"A": "Adequate", "B": "Explorable", "C": "High Risk", "D": "Not Recommended"}
+    return labels_cn.get(level, "—") if use_cjk else labels_en.get(level, "—")
 
 
 def generate_pdf_report(
@@ -187,7 +188,7 @@ def generate_pdf_report(
     # ========== 诊断等级 ==========
     if diagnosis:
         level = diagnosis["level"]
-        label = _level_label(level)
+        label = _level_label(level, use_cjk)
         colors = {"A": (26, 125, 54), "B": (184, 134, 11), "C": (204, 85, 0), "D": (179, 0, 0)}
         color = colors.get(level, (100, 100, 100))
         score = diagnosis["score"]
@@ -201,7 +202,11 @@ def generate_pdf_report(
         pdf.ln(2)
         f = pdf._font("I", 9); pdf.set_font(*f)
         pdf.set_text_color(80, 80, 80)
-        pdf.multi_cell(0, 5, diagnosis.get("reason", ""))
+        reason = diagnosis.get("reason", "")
+        if not use_cjk:
+            # 英文降级：显示诊断等级摘要
+            reason = f"Diagnosis: {level} ({label}) - Score {score}/100"
+        pdf.multi_cell(0, 5, reason)
         pdf.ln(8)
 
     # ========== 数据概况 ==========
