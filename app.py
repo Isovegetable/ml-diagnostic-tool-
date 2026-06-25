@@ -1138,8 +1138,10 @@ with st.expander("🤖 Step 2: 模型训练与评估", expanded=(st.session_stat
                 "dataset": target_column,
             },
         )
-    except Exception:
+    except Exception as _pdf_err:
         pdf_bytes = None
+        import traceback
+        st.caption(f"📕 PDF 导出失败：{_pdf_err}")
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -1168,7 +1170,7 @@ with st.expander("🤖 Step 2: 模型训练与评估", expanded=(st.session_stat
                 width="stretch",
             )
         else:
-            st.caption("📕 PDF 导出不可用（需安装 fpdf2）")
+            st.caption("📕 PDF 导出不可用")
     st.success("✅ Step 2 完成！模型训练和评估已完成。")
 
     st.success("✅ Step 2 完成！模型训练和评估已完成。")
