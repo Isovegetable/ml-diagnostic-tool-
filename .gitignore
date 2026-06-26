@@ -10,4 +10,4 @@ catboost_info/
 test_pdf.pdf
 packages/
 streamlit_log.txt
-发布包/*.zip
+发布包/
