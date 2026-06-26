@@ -61,6 +61,7 @@ class _ReportPDF(FPDF):
 
     def __init__(self, watermark: str | None = None):
         super().__init__()
+        self.set_auto_page_break(auto=True, margin=18)
         self._use_cjk = _CJK_FONT is not None and _add_cjk_font(self, _CJK_FONT)
         self._watermark = watermark
 
@@ -104,6 +105,11 @@ class _ReportPDF(FPDF):
         self.set_text_color(50, 50, 50)
         self.multi_cell(0, 6, text)
         self.ln(2)
+
+    def check_space(self, needed_mm: float):
+        """如果剩余空间不足，换页。needed_mm 是预估需要的高度。"""
+        if self.get_y() + needed_mm > self.h - self.b_margin:
+            self.add_page()
 
     def key_value(self, key_cn: str, value: str, key_en: str = ""):
         key = key_en if not self._use_cjk else key_cn
@@ -323,6 +329,7 @@ def generate_pdf_report(
 
     # ========== 模型对比表格 ==========
     if metrics_df is not None and len(metrics_df) > 1:
+        pdf.check_space(60)
         pdf.section_title(_tr("模型对比", "Model Comparison"), _tr("模型对比", "Model Comparison"))
         # 表头
         headers = [_tr("模型", "Model"), "Train R²", "Test R²", "CV R²", "MAE", "RMSE"]
@@ -353,6 +360,7 @@ def generate_pdf_report(
 
     # ========== HPO 超参数优化 ==========
     if hpo_results:
+        pdf.check_space(40)
         pdf.section_title(_tr("超参数优化 (HPO) 结果", "Hyperparameter Optimization"), _tr("超参数优化 (HPO) 结果", "HPO Results"))
         methods = {r["method"] for r in hpo_results.values()}
         method_str = ", ".join(m.upper() for m in methods)
@@ -390,18 +398,19 @@ def generate_pdf_report(
     # ========== 图表 ==========
     if scatter_plot_base64:
         try:
+            pdf.check_space(85)
             scatter_bytes = base64.b64decode(scatter_plot_base64)
             scatter_buf = BytesIO(scatter_bytes)
-            # 图大约 150mm 宽
-            pdf.image(scatter_buf, x=30, w=140)
+            pdf.image(scatter_buf, x=35, w=130)
             pdf.ln(3)
         except Exception:
             pass
     if convergence_plot_base64:
         try:
+            pdf.check_space(85)
             conv_bytes = base64.b64decode(convergence_plot_base64)
             conv_buf = BytesIO(conv_bytes)
-            pdf.image(conv_buf, x=30, w=140)
+            pdf.image(conv_buf, x=35, w=130)
             pdf.ln(3)
         except Exception:
             pass
