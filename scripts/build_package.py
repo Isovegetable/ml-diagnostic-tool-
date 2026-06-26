@@ -49,8 +49,12 @@ class PDF(FPDF):
         return ("CJK", style if style in ("", "B") else "", size) if self._use_cjk else ("Helvetica", style, size)
 
     def footer(self):
-        if self.page_no() > 1:
-            self.set_y(-15)
+        self.set_y(-15)
+        if self._watermark:
+            self.set_font(*self._f("", 7))
+            self.set_text_color(180, 180, 180)
+            self.cell(0, 10, self._watermark, align="C")
+        elif self.page_no() > 1:
             self.set_font(*self._f("", 8))
             self.set_text_color(150, 150, 150)
             self.cell(0, 10, "- {} -".format(self.page_no()), align="C")
