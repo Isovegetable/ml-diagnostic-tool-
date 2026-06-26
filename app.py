@@ -1,3 +1,8 @@
+import base64
+from datetime import datetime
+from io import BytesIO
+
+import matplotlib.pyplot as plt
 import streamlit as st
 import pandas as pd
 import warnings
@@ -22,7 +27,190 @@ from src.plots import (
     plot_partial_dependence,
     plot_pdp_with_individual,
 )
-from src.reports import generate_html_report, generate_report_text, generate_pdf_report
+from src.reports import generate_html_report, generate_pdf_report
+
+
+def _clear_derived_caches() -> None:
+    """训练数据或模型变化时，清空可解释性分析与报告缓存。"""
+    st.session_state.explain_cache = {}
+    for key in (
+        "report_html_bytes",
+        "report_html_fp",
+        "report_pdf_bytes",
+        "report_pdf_fp",
+        "report_pdf_error",
+    ):
+        st.session_state.pop(key, None)
+
+
+def _report_cache_key(data_fingerprint: str, best_model_name: str) -> str:
+    return f"{data_fingerprint}|{best_model_name}"
+
+
+def _build_html_report_bytes(
+    *,
+    regression_data,
+    target_column: str,
+    best_model_name: str,
+    best_result,
+    results,
+    metrics_df,
+    hpo_results,
+    suggestions,
+    diagnosis,
+    data_fingerprint: str,
+    outlier_rows: int,
+    near_dup_rows: int,
+) -> bytes:
+    scatter_b64 = None
+    convergence_b64 = None
+    try:
+        fig = plot_predicted_vs_actual(
+            best_result.y_test,
+            best_result.test_pred,
+            best_result.y_train,
+            best_result.train_pred,
+            title=best_model_name,
+            r2_test=best_result.test_r2,
+            rmse_test=best_result.rmse,
+            r2_train=best_result.train_r2,
+            rmse_train=best_result.train_rmse,
+            is_best=True,
+        )
+        buf = BytesIO()
+        fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
+        scatter_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        plt.close(fig)
+
+        if hpo_results and best_model_name in hpo_results:
+            fig = plot_hpo_convergence(hpo_results[best_model_name])
+            buf = BytesIO()
+            fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
+            convergence_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+            plt.close(fig)
+    except Exception as chart_err:
+        st.warning(f"报告图表嵌入失败（不影响文字内容）：{chart_err}")
+
+    report_html = generate_html_report(
+        original_shape=regression_data.original_shape,
+        sample_size=len(regression_data.model_data),
+        feature_count=len(regression_data.feature_columns),
+        target_column=target_column,
+        best_model_name=best_model_name,
+        test_r2=best_result.test_r2,
+        train_r2=best_result.train_r2,
+        cv_r2_mean=best_result.cv_r2_mean,
+        cv_r2_std=best_result.cv_r2_std,
+        mae=best_result.mae,
+        rmse=best_result.rmse,
+        suggestions=suggestions,
+        hpo_results=hpo_results if hpo_results else None,
+        all_params_by_model={mn: results[mn].model.get_params() for mn in results},
+        metrics_df=metrics_df,
+        scatter_plot_base64=scatter_b64,
+        convergence_plot_base64=convergence_b64,
+        diagnosis=diagnosis,
+        data_quality={
+            "duplicate_rows": regression_data.duplicate_rows,
+            "outlier_rows": outlier_rows,
+            "near_dup_rows": near_dup_rows,
+            "dataset": target_column,
+            "fingerprint": data_fingerprint[:40],
+        },
+        generated_date=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        watermark="懂点AI的C学长",
+    )
+    return report_html.encode("utf-8")
+
+
+def _build_pdf_report_bytes(
+    *,
+    regression_data,
+    target_column: str,
+    best_model_name: str,
+    best_result,
+    suggestions,
+    diagnosis,
+    outlier_rows: int,
+    near_dup_rows: int,
+) -> bytes | None:
+    return generate_pdf_report(
+        original_shape=regression_data.original_shape,
+        sample_size=len(regression_data.model_data),
+        feature_count=len(regression_data.feature_columns),
+        target_column=target_column,
+        best_model_name=best_model_name,
+        test_r2=best_result.test_r2,
+        train_r2=best_result.train_r2,
+        cv_r2_mean=best_result.cv_r2_mean,
+        cv_r2_std=best_result.cv_r2_std,
+        mae=best_result.mae,
+        rmse=best_result.rmse,
+        suggestions=suggestions,
+        diagnosis=diagnosis,
+        data_quality={
+            "duplicate_rows": regression_data.duplicate_rows,
+            "outlier_rows": outlier_rows,
+            "near_dup_rows": near_dup_rows,
+            "dataset": target_column,
+        },
+        watermark="懂点AI的C学长",
+    )
+
+
+def _run_explainability_analysis(
+    *,
+    model_obj,
+    x_train,
+    x_test,
+    feature_columns: list[str],
+    top_n_pdp: int,
+) -> dict:
+    x_pool = pd.concat([x_train, x_test], axis=0).reset_index(drop=True)
+    shap_values, expected_value, x_pool_sample = compute_shap_values(
+        model=model_obj,
+        x_train=x_train,
+        x_test=x_pool,
+        n_samples=500,
+    )
+
+    fig_shap = None
+    fig_bar = None
+    if shap_values is not None:
+        fig_shap = plot_shap_summary(
+            shap_values, x_pool_sample, feature_columns, max_display=15
+        )
+        fig_bar = plot_shap_bar(
+            shap_values, x_pool_sample, feature_columns, max_display=15
+        )
+
+    fig_pdp = plot_partial_dependence(
+        model=model_obj,
+        x_train=x_train,
+        feature_names=feature_columns,
+        top_n=top_n_pdp,
+        figsize=(12, 8),
+    )
+    fig_ice = plot_pdp_with_individual(
+        model=model_obj,
+        x_train=x_train,
+        feature_names=feature_columns,
+        top_n=top_n_pdp,
+        figsize=(12, 8),
+    )
+
+    return {
+        "shap_values": shap_values,
+        "expected_value": expected_value,
+        "x_pool_sample": x_pool_sample,
+        "feature_columns": feature_columns,
+        "fig_shap": fig_shap,
+        "fig_bar": fig_bar,
+        "fig_pdp": fig_pdp,
+        "fig_ice": fig_ice,
+        "top_n_pdp": top_n_pdp,
+    }
+
 
 # 页面配置
 st.set_page_config(
@@ -47,6 +235,8 @@ st.markdown(
 # 初始化 session state
 if "current_step" not in st.session_state:
     st.session_state.current_step = "Step 1"
+if "explain_cache" not in st.session_state:
+    st.session_state.explain_cache = {}
 
 # ========== 侧边栏：流程导航 + 使用指南 ==========
 with st.sidebar:
@@ -796,6 +986,7 @@ with st.expander("🤖 Step 2: 模型训练与评估", expanded=(st.session_stat
     else:
         if st.button("🔄 重新训练", width="stretch"):
             st.session_state.training_results = None
+            _clear_derived_caches()
             st.rerun()
 
     # 训练流程:只在没结果时执行
@@ -827,6 +1018,7 @@ with st.expander("🤖 Step 2: 模型训练与评估", expanded=(st.session_stat
             )
             st.session_state.training_results = (results, metrics_df, hpo_results)
             st.session_state.training_data_fp = data_fingerprint
+            _clear_derived_caches()
             progress_placeholder.success("✅ 模型训练完成！")
         else:
             st.info(
@@ -1031,148 +1223,76 @@ with st.expander("🤖 Step 2: 模型训练与评估", expanded=(st.session_stat
     st.markdown("---")
     st.markdown('<a id="sec-2-6"></a>', unsafe_allow_html=True)
     st.divider()
+    st.caption("报告按需生成：仅在你点击「生成报告」时计算，避免每次页面刷新重复耗时。")
 
-    # 为 HTML 报告生成嵌入图表(base64)
-    from io import BytesIO
-    import base64
+    report_fp = _report_cache_key(data_fingerprint, best_model_name)
+    outlier_rows = int(st.session_state.get("_outlier_rows", 0))
+    near_dup_rows = int(st.session_state.get("_near_dup_rows", 0))
+    diagnosis = st.session_state.get("diagnosis")
 
-    scatter_b64 = None
-    convergence_b64 = None
-    try:
-        fig = plot_predicted_vs_actual(
-            best_result.y_test, best_result.test_pred,
-            best_result.y_train, best_result.train_pred,
-            title=best_model_name,
-            r2_test=best_result.test_r2, rmse_test=best_result.rmse,
-            r2_train=best_result.train_r2, rmse_train=best_result.train_rmse,
-            is_best=True,
-        )
-        buf = BytesIO()
-        fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
-        scatter_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-        import matplotlib.pyplot as _plt
-        _plt.close(fig)
-
-        if hpo_results and best_model_name in hpo_results:
-            fig = plot_hpo_convergence(hpo_results[best_model_name])
-            buf = BytesIO()
-            fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
-            convergence_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-            _plt.close(fig)
-    except Exception:
-        pass  # 图表嵌入失败不影响报告下载
-
-    # 生成 TXT 报告
-    report_text = generate_report_text(
-        original_shape=regression_data.original_shape,
-        sample_size=len(regression_data.model_data),
-        feature_count=len(regression_data.feature_columns),
+    report_kwargs = dict(
+        regression_data=regression_data,
         target_column=target_column,
         best_model_name=best_model_name,
-        test_r2=best_result.test_r2,
-        train_r2=best_result.train_r2,
-        cv_r2_mean=best_result.cv_r2_mean,
-        cv_r2_std=best_result.cv_r2_std,
-        mae=best_result.mae,
-        rmse=best_result.rmse,
-        suggestions=suggestions,
-        hpo_results=hpo_results if hpo_results else None,
-        all_params_by_model={
-            mn: results[mn].model.get_params() for mn in results
-        },
-        diagnosis=st.session_state.get("diagnosis"),
-    )
-
-    # 生成 HTML 报告(含图表)
-    report_html = generate_html_report(
-        original_shape=regression_data.original_shape,
-        sample_size=len(regression_data.model_data),
-        feature_count=len(regression_data.feature_columns),
-        target_column=target_column,
-        best_model_name=best_model_name,
-        test_r2=best_result.test_r2,
-        train_r2=best_result.train_r2,
-        cv_r2_mean=best_result.cv_r2_mean,
-        cv_r2_std=best_result.cv_r2_std,
-        mae=best_result.mae,
-        rmse=best_result.rmse,
-        suggestions=suggestions,
-        hpo_results=hpo_results if hpo_results else None,
-        all_params_by_model={
-            mn: results[mn].model.get_params() for mn in results
-        },
+        best_result=best_result,
+        results=results,
         metrics_df=metrics_df,
-        scatter_plot_base64=scatter_b64,
-        convergence_plot_base64=convergence_b64,
-        diagnosis=st.session_state.get("diagnosis"),
-        data_quality={
-            "duplicate_rows": regression_data.duplicate_rows,
-            "outlier_rows": st.session_state.get("_outlier_rows", 0),
-            "near_dup_rows": st.session_state.get("_near_dup_rows", 0),
-            "dataset": target_column,
-            "fingerprint": data_fingerprint[:40],
-        },
-        generated_date=__import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M"),
+        hpo_results=hpo_results,
+        suggestions=suggestions,
+        diagnosis=diagnosis,
+        data_fingerprint=data_fingerprint,
+        outlier_rows=outlier_rows,
+        near_dup_rows=near_dup_rows,
     )
 
-    # 生成 PDF 报告
-    try:
-        pdf_bytes = generate_pdf_report(
-            original_shape=regression_data.original_shape,
-            sample_size=len(regression_data.model_data),
-            feature_count=len(regression_data.feature_columns),
-            target_column=target_column,
-            best_model_name=best_model_name,
-            test_r2=best_result.test_r2,
-            train_r2=best_result.train_r2,
-            cv_r2_mean=best_result.cv_r2_mean,
-            cv_r2_std=best_result.cv_r2_std,
-            mae=best_result.mae,
-            rmse=best_result.rmse,
-            suggestions=suggestions,
-            diagnosis=st.session_state.get("diagnosis"),
-            data_quality={
-                "duplicate_rows": regression_data.duplicate_rows,
-                "outlier_rows": st.session_state.get("_outlier_rows", 0),
-                "near_dup_rows": st.session_state.get("_near_dup_rows", 0),
-                "dataset": target_column,
-            },
-        )
-    except Exception as _pdf_err:
-        pdf_bytes = None
-        import traceback
-        st.caption(f"📕 PDF 导出失败：{_pdf_err}")
-
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
-        st.download_button(
-            "📄 下载诊断报告 (TXT)",
-            data=report_text.encode("utf-8"),
-            file_name="materials_ml_report.txt",
-            mime="text/plain",
-            width="stretch",
-        )
-    with col2:
-        st.download_button(
-            "📊 下载诊断报告 (HTML)",
-            data=report_html.encode("utf-8"),
-            file_name="materials_ml_report.html",
-            mime="text/html",
-            width="stretch",
-        )
-    with col3:
-        if pdf_bytes:
+        if st.button("📊 生成 HTML 报告", width="stretch"):
+            with st.spinner("正在生成 HTML 报告..."):
+                st.session_state.report_html_bytes = _build_html_report_bytes(**report_kwargs)
+                st.session_state.report_html_fp = report_fp
+
+        if (
+            st.session_state.get("report_html_fp") == report_fp
+            and st.session_state.get("report_html_bytes")
+        ):
             st.download_button(
-                "📕 下载诊断报告 (PDF)",
-                data=pdf_bytes,
+                "📥 下载诊断报告 (HTML)",
+                data=st.session_state.report_html_bytes,
+                file_name="materials_ml_report.html",
+                mime="text/html",
+                width="stretch",
+            )
+        else:
+            st.caption("👆 请先点击「生成 HTML 报告」")
+
+    with col2:
+        if st.button("📕 生成 PDF 报告", width="stretch"):
+            with st.spinner("正在生成 PDF 报告..."):
+                try:
+                    st.session_state.report_pdf_bytes = _build_pdf_report_bytes(**report_kwargs)
+                    st.session_state.report_pdf_fp = report_fp
+                    st.session_state.report_pdf_error = None
+                except Exception as pdf_err:
+                    st.session_state.report_pdf_bytes = None
+                    st.session_state.report_pdf_fp = None
+                    st.session_state.report_pdf_error = str(pdf_err)
+
+        if (
+            st.session_state.get("report_pdf_fp") == report_fp
+            and st.session_state.get("report_pdf_bytes")
+        ):
+            st.download_button(
+                "📥 下载诊断报告 (PDF)",
+                data=st.session_state.report_pdf_bytes,
                 file_name="materials_ml_report.pdf",
                 mime="application/pdf",
                 width="stretch",
             )
+        elif st.session_state.get("report_pdf_error"):
+            st.caption(f"📕 PDF 导出失败：{st.session_state.report_pdf_error}")
         else:
-            st.caption("📕 PDF 导出不可用")
-    st.success("✅ Step 2 完成！模型训练和评估已完成。")
-
+            st.caption("👆 请先点击「生成 PDF 报告」")
     st.success("✅ Step 2 完成！模型训练和评估已完成。")
 
 # ========================================================================
@@ -1210,6 +1330,38 @@ with st.expander("🔍 Step 3: 可解释性分析", expanded=(st.session_state.c
     x_test = selected_model.x_test
     model_obj = selected_model.model
 
+    explain_key = f"{st.session_state.get('training_data_fp', '')}|{selected_model_name}"
+    cached_explain = st.session_state.explain_cache.get(explain_key)
+
+    run_explain = st.button(
+        "🔄 重新分析" if cached_explain else "🔬 开始可解释性分析",
+        type="primary",
+        width="stretch",
+        help="SHAP / PDP / ICE 计算较耗时，按需运行；结果会缓存，切换步骤不会重复计算",
+    )
+
+    if cached_explain is None and not run_explain:
+        st.info("👆 点击上方按钮开始可解释性分析（按需运行，避免每次刷新重复计算）")
+        st.stop()
+
+    if run_explain:
+        n_features = len(feature_columns)
+        top_n_pdp = min(6, n_features)
+        with st.spinner("⏳ 正在计算 SHAP / PDP / ICE（可能需要几十秒）..."):
+            st.session_state.explain_cache[explain_key] = _run_explainability_analysis(
+                model_obj=model_obj,
+                x_train=x_train,
+                x_test=x_test,
+                feature_columns=feature_columns,
+                top_n_pdp=top_n_pdp,
+            )
+        cached_explain = st.session_state.explain_cache[explain_key]
+
+    shap_values = cached_explain["shap_values"]
+    x_pool_sample = cached_explain["x_pool_sample"]
+    feature_columns = cached_explain["feature_columns"]
+    top_n_pdp = cached_explain["top_n_pdp"]
+
     # ========== SHAP 分析 ==========
     st.markdown("---")
     st.markdown('<a id="sec-3-1"></a>', unsafe_allow_html=True)
@@ -1221,16 +1373,6 @@ with st.expander("🔍 Step 3: 可解释性分析", expanded=(st.session_state.c
 
     shap_check_container = st.empty()
 
-    with st.spinner("⏳ 正在计算 SHAP 值（可能需要几秒钟）..."):
-        # 合并训练集和测试集，保证样本量足够密实（SHAP 不依赖标签）
-        x_pool = pd.concat([x_train, x_test], axis=0).reset_index(drop=True)
-        shap_values, expected_value, x_pool_sample = compute_shap_values(
-            model=model_obj,
-            x_train=x_train,
-            x_test=x_pool,
-            n_samples=500,
-        )
-
     if shap_values is None:
         shap_check_container.warning(
             "⚠️ SHAP 分析当前版本暂不适配此模型类型，跳过。"
@@ -1238,15 +1380,12 @@ with st.expander("🔍 Step 3: 可解释性分析", expanded=(st.session_state.c
     else:
         shap_check_container.success(f"✅ SHAP 值计算完成（基于 {len(x_pool_sample)} 条样本）")
 
-        # SHAP 摘要图
         col1, col2 = st.columns(2)
 
         with col1:
             st.markdown("**📊 SHAP 摘要图 (Beeswarm)**")
             st.caption("反映特征重要性和影响方向")
-            fig_shap = plot_shap_summary(
-                shap_values, x_pool_sample, feature_columns, max_display=15
-            )
+            fig_shap = cached_explain["fig_shap"]
             if fig_shap:
                 st.pyplot(fig_shap)
             else:
@@ -1256,15 +1395,12 @@ with st.expander("🔍 Step 3: 可解释性分析", expanded=(st.session_state.c
             st.markdown('<a id="sec-3-2"></a>', unsafe_allow_html=True)
             st.markdown("**📊 SHAP 特征重要性**")
             st.caption("按 mean(|SHAP|) 排序的全局特征重要性")
-            fig_bar = plot_shap_bar(
-                shap_values, x_pool_sample, feature_columns, max_display=15
-            )
+            fig_bar = cached_explain["fig_bar"]
             if fig_bar:
                 st.pyplot(fig_bar)
             else:
                 st.info("SHAP 柱状图生成失败")
 
-        # 补充说明
         with st.expander("📖 如何理解 SHAP 图？", expanded=False):
             st.markdown(
                 """
@@ -1294,19 +1430,9 @@ with st.expander("🔍 Step 3: 可解释性分析", expanded=(st.session_state.c
         "帮助理解特征与目标之间的函数关系（线性、非线性、单调性等）。"
     )
 
-    n_features = len(feature_columns)
-    top_n_pdp = min(6, n_features)
     st.caption(f"展示前 {top_n_pdp} 个特征，如需分析特定特征可切换模型")
 
-    with st.spinner("⏳ 正在生成偏依赖图..."):
-        fig_pdp = plot_partial_dependence(
-            model=model_obj,
-            x_train=x_train,
-            feature_names=feature_columns,
-            top_n=top_n_pdp,
-            figsize=(12, 8),
-        )
-
+    fig_pdp = cached_explain["fig_pdp"]
     if fig_pdp:
         st.pyplot(fig_pdp)
     else:
@@ -1319,14 +1445,7 @@ with st.expander("🔍 Step 3: 可解释性分析", expanded=(st.session_state.c
             "ICE 曲线展示每个样本的预测随特征变化的个体趋势（灰色细线），"
             "PDP（红色粗线）是所有 ICE 的平均。ICE 越多越分散，说明特征交互越强。"
         )
-        with st.spinner("⏳ 正在计算 ICE 曲线..."):
-            fig_ice = plot_pdp_with_individual(
-                model=model_obj,
-                x_train=x_train,
-                feature_names=feature_columns,
-                top_n=top_n_pdp,
-                figsize=(12, 8),
-            )
+        fig_ice = cached_explain["fig_ice"]
         if fig_ice:
             st.pyplot(fig_ice)
         else:
