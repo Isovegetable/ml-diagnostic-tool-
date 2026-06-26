@@ -1,72 +1,80 @@
 @echo off
 chcp 65001 >nul
-title 材料机器学习诊断工具
+title ML Diagnostic Tool
 
 echo ============================================
-echo  材料机器学习自动诊断工具 - 启动脚本
+echo  Materials ML Diagnostic Tool
 echo ============================================
 echo.
 
-:: 检查 Python
+:: Kill any leftover Streamlit from previous session
+taskkill /F /IM streamlit.exe >nul 2>&1
+ping -n 2 127.0.0.1 >nul
+
+:: Check Python
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [错误] 未检测到 Python，请先安装 Python 3.9+
-    echo 下载地址：https://www.python.org/downloads/
-    echo.
-    echo 安装时务必勾选 "Add Python to PATH"
+    echo [ERROR] Python not found. Install Python 3.9+
+    echo Download: https://www.python.org/downloads/
+    echo Make sure to check "Add Python to PATH"
     pause
     exit /b 1
 )
-echo [OK] 检测到 Python
+echo [OK] Python detected
 
-:: 检查是否为首次运行（虚拟环境是否存在）
+:: Switch to script directory
+cd /d "%~dp0"
+
+:: First-run setup
 if not exist ".venv\Scripts\python.exe" (
     echo.
-    echo ============ 首次启动需完成以下步骤（仅一次）============
+    echo ============ First-time setup ============
     echo.
-    echo  步骤 1/2：正在创建虚拟环境...
+    echo [1/2] Creating virtual environment...
     python -m venv .venv
-    if %errorlevel% neq 0 (
-        echo [错误] 虚拟环境创建失败
-        pause
-        exit /b 1
-    )
-    echo [OK] 虚拟环境创建完成
+    if %errorlevel% neq 0 ( echo [ERROR] Failed; pause; exit /b 1 )
+    echo [OK] Virtual environment created
     echo.
-    echo  步骤 2/2：正在安装依赖（约 2-5 分钟，取决于网络速度）
-    echo  正在下载 shap/xgboost/lightgbm/catboost 等包...
+    echo [2/2] Installing dependencies...
     echo.
-    call .venv\Scripts\pip.exe install -r requirements.txt
+    call .venv\Scripts\pip.exe install -r requirements.txt --no-index --find-links=packages
     if %errorlevel% neq 0 (
-        echo [错误] 依赖安装失败
-        pause
-        exit /b 1
+        echo [..] Trying network...
+        call .venv\Scripts\pip.exe install -r requirements.txt
+        if %errorlevel% neq 0 ( echo [ERROR] Failed; pause; exit /b 1 )
     )
-    echo [OK] 依赖安装完成
-    echo ============================================================
-) else (
-    :: 检查依赖是否有更新
-    echo [..] 检查依赖...
-    call .venv\Scripts\pip.exe install -r requirements.txt -q
+    echo [OK] Dependencies installed
+    echo ==========================================
 )
 
 echo.
-echo [OK] 正在启动...
-echo.
-echo 提示：
-echo   - 等待 Streamlit 启动后，浏览器将自动打开
-echo   - 上传 Excel/CSV 数据即可开始分析
-echo   - 关闭本窗口即可退出程序
+echo [OK] Starting Streamlit server...
 echo.
 
-:: 先启动 Streamlit，等几秒后再打开浏览器
-start /B "" ".venv\Scripts\streamlit.exe" run app.py
-timeout /t 5 /nobreak >nul
+:: Start Streamlit in background
+start /B "" ".venv\Scripts\streamlit.exe" run app.py --server.headless true > streamlit_log.txt 2>&1
+
+:: Wait for server (check every 2 seconds, up to 30 seconds)
+set WAIT_COUNT=0
+:SERVER_CHECK
+set /a WAIT_COUNT+=1
+python -c "import urllib.request; urllib.request.urlopen('http://localhost:8501')" >nul 2>&1 && goto SERVER_READY
+echo  Starting... (%WAIT_COUNT%/15)
+ping -n 2 127.0.0.1 >nul
+if %WAIT_COUNT% lss 15 goto SERVER_CHECK
+
+:SERVER_READY
+echo.
+echo [OK] Server is ready!
+echo.
+echo Opening browser...
 start http://localhost:8501
 
+echo.
 echo ============================================
-echo  浏览器已打开，如果显示"无法访问"，刷新一下即可
+echo  If browser doesn't open, visit:
+echo  http://localhost:8501
+echo  Close this window to exit.
 echo ============================================
-
-:: 等待用户关闭
+echo.
 pause >nul

@@ -8,3 +8,5 @@ catboost_info/
 .claude/
 .fonts/
 test_pdf.pdf
+packages/
+streamlit_log.txt

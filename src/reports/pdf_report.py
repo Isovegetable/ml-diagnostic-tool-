@@ -5,11 +5,13 @@ PDF 报告生成模块。
 支持中文字体（自动探测 Windows/Mac/Linux 系统字体）。
 """
 
+import base64
 import os
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
+import pandas as pd
 from fpdf import FPDF
 
 # 自动探测系统可用的中文字体
@@ -144,6 +146,67 @@ def _level_label(level: str, use_cjk: bool = True) -> str:
     return labels_cn.get(level, "—") if use_cjk else labels_en.get(level, "—")
 
 
+def _next_steps_suggestions(diagnosis: dict | None, test_r2: float, sample_size: int, use_cjk: bool = True) -> list[str]:
+    if not diagnosis:
+        return []
+    level = diagnosis["level"]
+    if use_cjk:
+        steps_map = {
+            "A": [
+                "优先关注 SHAP 重要性排名前 3 的特征，围绕这些变量设计验证实验",
+                "检查特征之间的物理/化学关联性，确认模型识别的关系是否合理",
+                "如目标 R² 满足要求，可进入论文建模阶段，建议补充外部验证集",
+            ],
+            "B": [
+                "特征数/样本比偏低，建议补充 30%–50% 的样本量",
+                "检查是否有高相关特征群，可合并或保留其中一个",
+                "考虑增加与目标变量物理相关的特征，减少无关或噪声特征",
+                "检查异常值来源，确认是测量误差还是真实极端条件",
+            ],
+            "C": [
+                "当前模型不稳定，不建议用于正式分析",
+                "优先排查数据质量问题：异常值、近重复、缺失模式",
+                "检查目标变量分布是否存在极端偏态，考虑对数变换",
+                "建议大幅扩充样本量（当前数据量下模型不可靠）",
+                "如有可能，寻找文献中同类材料的已知特征-性能关系作为先验",
+            ],
+            "D": [
+                "当前数据不适合机器学习建模",
+                "建议重新评估数据采集方案：增加样本量、控制变量、降低测量误差",
+                "检查目标变量的变异范围是否足够大（过小的变异无法建模）",
+                "考虑是否用了正确的目标变量（数值型 vs 类别型）",
+            ],
+        }
+    else:
+        steps_map = {
+            "A": [
+                "Focus on top 3 SHAP features for validation experiments",
+                "Check physical/chemical relevance of identified features",
+                "Consider adding external validation set for publication",
+            ],
+            "B": [
+                "Consider adding 30-50% more samples",
+                "Check for highly correlated feature groups",
+                "Add physically relevant features, reduce noise features",
+                "Inspect outlier sources (measurement error vs extreme conditions)",
+            ],
+            "C": [
+                "Model unstable — not recommended for formal analysis",
+                "Prioritize data quality: outliers, near-duplicates, missing patterns",
+                "Check target distribution skew, consider log transform",
+                "Substantially increase sample size recommended",
+                "Search literature for known feature-property relationships as prior",
+            ],
+            "D": [
+                "Current data not suitable for ML modeling",
+                "Reconsider data collection: more samples, controlled variables",
+                "Check if target variable has sufficient variance",
+                "Verify target variable type (numeric vs categorical)",
+            ],
+        }
+    return steps_map.get(level, [])
+
+
 def generate_pdf_report(
     original_shape: tuple,
     sample_size: int,
@@ -160,6 +223,12 @@ def generate_pdf_report(
     diagnosis: dict | None = None,
     data_quality: dict | None = None,
     watermark: str | None = None,
+    metrics_df: pd.DataFrame | None = None,
+    hpo_results: dict | None = None,
+    all_params_by_model: dict | None = None,
+    scatter_plot_base64: str | None = None,
+    convergence_plot_base64: str | None = None,
+    generated_date: str | None = None,
 ) -> bytes:
     """
     生成 PDF 格式诊断报告。
@@ -182,7 +251,7 @@ def generate_pdf_report(
     pdf.ln(5)
     f = pdf._font("", 11); pdf.set_font(*f)
     pdf.set_text_color(120, 120, 120)
-    pdf.cell(0, 7, _tr("生成时间：", "Generated: ") + datetime.now().strftime('%Y-%m-%d %H:%M'), align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, _tr("生成时间：", "Generated: ") + (generated_date or datetime.now().strftime('%Y-%m-%d %H:%M')), align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 7, _tr("目标列：", "Target: ") + target_column, align="C", new_x="LMARGIN", new_y="NEXT")
     if data_quality:
         pdf.cell(0, 7, _tr("数据集：", "Dataset: ") + data_quality.get('dataset', target_column), align="C", new_x="LMARGIN", new_y="NEXT")
@@ -252,6 +321,91 @@ def generate_pdf_report(
     ])
     pdf.ln(4)
 
+    # ========== 模型对比表格 ==========
+    if metrics_df is not None and len(metrics_df) > 1:
+        pdf.section_title(_tr("模型对比", "Model Comparison"), _tr("模型对比", "Model Comparison"))
+        # 表头
+        headers = [_tr("模型", "Model"), "Train R²", "Test R²", "CV R²", "MAE", "RMSE"]
+        col_widths = [36, 28, 28, 32, 28, 28]  # total ~180
+        f = pdf._font("B", 8); pdf.set_font(*f)
+        pdf.set_fill_color(31, 119, 180)
+        pdf.set_text_color(255, 255, 255)
+        for i, h in enumerate(headers):
+            pdf.cell(col_widths[i], 7, h, border=1, fill=True, align="C")
+        pdf.ln()
+        # 数据行
+        f_alt = pdf._font("", 8); pdf.set_font(*f_alt)
+        pdf.set_text_color(50, 50, 50)
+        for idx, (_, row) in enumerate(metrics_df.iterrows()):
+            if idx % 2 == 1:
+                pdf.set_fill_color(245, 248, 252)
+                fill = True
+            else:
+                fill = False
+            pdf.cell(col_widths[0], 6, str(row["model"]), border=1, align="C", fill=fill)
+            pdf.cell(col_widths[1], 6, f"{row['train_r2']:.4f}", border=1, align="C", fill=fill)
+            pdf.cell(col_widths[2], 6, f"{row['test_r2']:.4f}", border=1, align="C", fill=fill)
+            pdf.cell(col_widths[3], 6, f"{row['cv_r2_mean']:.4f}±{row['cv_r2_std']:.4f}", border=1, align="C", fill=fill)
+            pdf.cell(col_widths[4], 6, f"{row['mae']:.4f}", border=1, align="C", fill=fill)
+            pdf.cell(col_widths[5], 6, f"{row['rmse']:.4f}", border=1, align="C", fill=fill)
+            pdf.ln()
+        pdf.ln(4)
+
+    # ========== HPO 超参数优化 ==========
+    if hpo_results:
+        pdf.section_title(_tr("超参数优化 (HPO) 结果", "Hyperparameter Optimization"), _tr("超参数优化 (HPO) 结果", "HPO Results"))
+        methods = {r["method"] for r in hpo_results.values()}
+        method_str = ", ".join(m.upper() for m in methods)
+        f = pdf._font("", 10); pdf.set_font(*f)
+        pdf.set_text_color(80, 80, 80)
+        pdf.cell(0, 7, _tr("优化方法: ", "Method: ") + method_str, new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+        for model_name, hpo_res in hpo_results.items():
+            params_str = ", ".join(f"{k}={v}" for k, v in hpo_res["best_params"].items())
+            f = pdf._font("B", 9); pdf.set_font(*f)
+            pdf.set_text_color(31, 119, 180)
+            pdf.cell(0, 6, model_name, new_x="LMARGIN", new_y="NEXT")
+            f = pdf._font("", 8); pdf.set_font(*f)
+            pdf.set_text_color(60, 60, 60)
+            pdf.cell(0, 5, _tr(
+                f"  CV R² = {hpo_res['best_score']:.4f}, RMSE = {hpo_res.get('best_rmse', 0.0):.4f} ({hpo_res['n_trials']} 轮)",
+                f"  CV R² = {hpo_res['best_score']:.4f}, RMSE = {hpo_res.get('best_rmse', 0.0):.4f} ({hpo_res['n_trials']} trials)",
+            ), new_x="LMARGIN", new_y="NEXT")
+            pdf.set_text_color(100, 100, 100)
+            pdf.set_x(15)  # indent
+            f = pdf._font("", 7); pdf.set_font(*f)
+            pdf.multi_cell(0, 4, f"  {params_str}")
+            if all_params_by_model and model_name in all_params_by_model:
+                all_p = all_params_by_model[model_name]
+                tuned_keys = set(hpo_res["best_params"].keys())
+                other = {k: v for k, v in all_p.items() if k not in tuned_keys}
+                if other:
+                    other_str = ", ".join(f"{k}={v}" for k, v in other.items())
+                    pdf.set_text_color(140, 140, 140)
+                    pdf.set_x(18)
+                    pdf.multi_cell(0, 4, _tr(f"其他(默认): {{{other_str}}}", f"(defaults): {{{other_str}}}"))
+            pdf.ln(2)
+        pdf.ln(2)
+
+    # ========== 图表 ==========
+    if scatter_plot_base64:
+        try:
+            scatter_bytes = base64.b64decode(scatter_plot_base64)
+            scatter_buf = BytesIO(scatter_bytes)
+            # 图大约 150mm 宽
+            pdf.image(scatter_buf, x=30, w=140)
+            pdf.ln(3)
+        except Exception:
+            pass
+    if convergence_plot_base64:
+        try:
+            conv_bytes = base64.b64decode(convergence_plot_base64)
+            conv_buf = BytesIO(conv_bytes)
+            pdf.image(conv_buf, x=30, w=140)
+            pdf.ln(3)
+        except Exception:
+            pass
+
     # ========== 诊断建议 ==========
     if suggestions:
         pdf.section_title(_tr("诊断建议", "Recommendations"), _tr("诊断建议", "Recommendations"))
@@ -263,6 +417,24 @@ def generate_pdf_report(
             for s in suggestions:
                 pdf.cell(5, 6, "-")
                 pdf.multi_cell(0, 6, s)
+                pdf.ln(1)
+        pdf.ln(2)
+
+    # ========== 下一步建议 ==========
+    next_steps = _next_steps_suggestions(diagnosis, test_r2, sample_size, use_cjk)
+    if next_steps:
+        pdf.section_title(_tr("下一步建议", "Next Steps"), _tr("下一步建议", "Next Steps"))
+        f = pdf._font("", 10); pdf.set_font(*f)
+        pdf.set_text_color(50, 50, 50)
+        if use_cjk:
+            for i, step in enumerate(next_steps, 1):
+                pdf.cell(5, 6, f"{i}.")
+                pdf.multi_cell(0, 6, step)
+                pdf.ln(1)
+        else:
+            for step in next_steps:
+                pdf.cell(5, 6, "-")
+                pdf.multi_cell(0, 6, step)
                 pdf.ln(1)
         pdf.ln(2)
 

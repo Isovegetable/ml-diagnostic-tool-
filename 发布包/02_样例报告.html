@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>样例报告 - 混凝土强度预测</title>
+<style>
+body { font-family: 'Microsoft YaHei', sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; color: #333; }
+h1 { color: #1F77B4; border-bottom: 3px solid #1F77B4; padding-bottom: 10px; }
+h2 { color: #1F77B4; margin-top: 30px; }
+.level-A { background: #e8f5e9; border-left: 5px solid #1a7d36; padding: 10px 15px; font-size: 18px; font-weight: bold; }
+.metric { display: inline-block; background: #eef2f7; border-radius: 6px; padding: 10px 18px; margin: 5px; text-align: center; }
+.metric .val { font-size: 22px; font-weight: bold; color: #1F77B4; }
+.metric .lab { font-size: 12px; color: #888; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
+th { background: #1F77B4; color: white; }
+tr:nth-child(even) { background: #f9f9f9; }
+</style></head><body>
+<h1>材料机器学习诊断报告</h1>
+<p><strong>目标列：</strong>compress_strength | <strong>生成时间：</strong>2026-06-26</p>
+<p><strong>数据集：</strong>混凝土强度数据（15 样本, 4 特征）</p>
+<h2>诊断等级</h2>
+<div class="level-A">A  适合建模  评分 82/100</div>
+<p>数据质量良好，特征与目标变量相关性较强，适合进行机器学习建模。</p>
+<h2>最佳模型：Random Forest</h2>
+<div>
+<div class="metric"><div class="val">0.9234</div><div class="lab">CV R2</div></div>
+<div class="metric"><div class="val">0.8978</div><div class="lab">Test R2</div></div>
+<div class="metric"><div class="val">0.9512</div><div class="lab">Train R2</div></div>
+</div>
+<h2>模型对比</h2>
+<table>
+<tr><th>模型</th><th>CV R2</th><th>Test R2</th><th>排名</th></tr>
+<tr><td>Random Forest</td><td>0.9234</td><td>0.8978</td><td>1</td></tr>
+<tr><td>Gradient Boosting</td><td>0.9012</td><td>0.8756</td><td>2</td></tr>
+<tr><td>XGBoost</td><td>0.8895</td><td>0.8612</td><td>3</td></tr>
+<tr><td>LightGBM</td><td>0.8721</td><td>0.8435</td><td>4</td></tr>
+<tr><td>线性回归</td><td>0.8345</td><td>0.8123</td><td>5</td></tr>
+<tr><td>CatBoost</td><td>0.8245</td><td>0.7988</td><td>6</td></tr>
+</table>
+<h2>建议</h2>
+<ul>
+<li>样本量偏少（15 条），建议补充更多实验数据</li>
+<li>交叉验证 R2 标准差较低，模型稳定性较好</li>
+<li>训练集和测试集 R2 差距在合理范围内，无明显过拟合</li>
+</ul>
+<p style="color:#999; font-size:12px; margin-top:40px;">本报告由材料机器学习自动诊断工具生成，仅供参考</p>
+</body></html>

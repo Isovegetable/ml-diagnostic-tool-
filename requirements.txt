@@ -6,11 +6,8 @@ optuna
 matplotlib
 seaborn
 openpyxl
-# 可选模型: 按需 pip install,不安装不影响基础功能
 xgboost
 lightgbm
 catboost
-# SHAP 可解释性分析
 shap
-# PDF 报告导出
 fpdf2

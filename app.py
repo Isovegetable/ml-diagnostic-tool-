@@ -133,7 +133,41 @@ def _build_pdf_report_bytes(
     diagnosis,
     outlier_rows: int,
     near_dup_rows: int,
+    results,
+    metrics_df,
+    hpo_results,
+    data_fingerprint,
+    **kwargs,
 ) -> bytes | None:
+    scatter_b64 = None
+    convergence_b64 = None
+    try:
+        fig = plot_predicted_vs_actual(
+            best_result.y_test,
+            best_result.test_pred,
+            best_result.y_train,
+            best_result.train_pred,
+            title=best_model_name,
+            r2_test=best_result.test_r2,
+            rmse_test=best_result.rmse,
+            r2_train=best_result.train_r2,
+            rmse_train=best_result.train_rmse,
+            is_best=True,
+        )
+        buf = BytesIO()
+        fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
+        scatter_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        plt.close(fig)
+
+        if hpo_results and best_model_name in hpo_results:
+            fig = plot_hpo_convergence(hpo_results[best_model_name])
+            buf = BytesIO()
+            fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
+            convergence_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+            plt.close(fig)
+    except Exception:
+        pass
+
     return generate_pdf_report(
         original_shape=regression_data.original_shape,
         sample_size=len(regression_data.model_data),
@@ -153,8 +187,15 @@ def _build_pdf_report_bytes(
             "outlier_rows": outlier_rows,
             "near_dup_rows": near_dup_rows,
             "dataset": target_column,
+            "fingerprint": data_fingerprint[:40],
         },
         watermark="懂点AI的C学长",
+        metrics_df=metrics_df,
+        hpo_results=hpo_results if hpo_results else None,
+        all_params_by_model={mn: results[mn].model.get_params() for mn in results},
+        scatter_plot_base64=scatter_b64,
+        convergence_plot_base64=convergence_b64,
+        generated_date=datetime.now().strftime("%Y-%m-%d %H:%M"),
     )
 
 
@@ -1247,10 +1288,10 @@ with st.expander("🤖 Step 2: 模型训练与评估", expanded=(st.session_stat
 
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("📊 生成 HTML 报告", width="stretch"):
-            with st.spinner("正在生成 HTML 报告..."):
-                st.session_state.report_html_bytes = _build_html_report_bytes(**report_kwargs)
-                st.session_state.report_html_fp = report_fp
+        if st.button("📊 生成 HTML 报告", width="stretch", key="btn_html"):
+            st.session_state.report_html_bytes = _build_html_report_bytes(**report_kwargs)
+            st.session_state.report_html_fp = report_fp
+            st.rerun()
 
         if (
             st.session_state.get("report_html_fp") == report_fp
@@ -1262,21 +1303,22 @@ with st.expander("🤖 Step 2: 模型训练与评估", expanded=(st.session_stat
                 file_name="materials_ml_report.html",
                 mime="text/html",
                 width="stretch",
+                key="dload_html",
             )
         else:
             st.caption("👆 请先点击「生成 HTML 报告」")
 
     with col2:
-        if st.button("📕 生成 PDF 报告", width="stretch"):
-            with st.spinner("正在生成 PDF 报告..."):
-                try:
-                    st.session_state.report_pdf_bytes = _build_pdf_report_bytes(**report_kwargs)
-                    st.session_state.report_pdf_fp = report_fp
-                    st.session_state.report_pdf_error = None
-                except Exception as pdf_err:
-                    st.session_state.report_pdf_bytes = None
-                    st.session_state.report_pdf_fp = None
-                    st.session_state.report_pdf_error = str(pdf_err)
+        if st.button("📕 生成 PDF 报告", width="stretch", key="btn_pdf"):
+            try:
+                st.session_state.report_pdf_bytes = _build_pdf_report_bytes(**report_kwargs)
+                st.session_state.report_pdf_fp = report_fp
+                st.session_state.report_pdf_error = None
+            except Exception as pdf_err:
+                st.session_state.report_pdf_bytes = None
+                st.session_state.report_pdf_fp = None
+                st.session_state.report_pdf_error = str(pdf_err)
+            st.rerun()
 
         if (
             st.session_state.get("report_pdf_fp") == report_fp
@@ -1288,6 +1330,7 @@ with st.expander("🤖 Step 2: 模型训练与评估", expanded=(st.session_stat
                 file_name="materials_ml_report.pdf",
                 mime="application/pdf",
                 width="stretch",
+                key="dload_pdf",
             )
         elif st.session_state.get("report_pdf_error"):
             st.caption(f"📕 PDF 导出失败：{st.session_state.report_pdf_error}")
